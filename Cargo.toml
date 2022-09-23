@@ -1,0 +1,11 @@
+[package]
+name = "aski"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+crossterm = "0.25.0"
+ez_input = { git = "https://github.com/R-ARM/ez_input.git", branch = "main" }
