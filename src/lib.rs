@@ -24,7 +24,20 @@ static ORIGIN_X: u16 = 4;
 static ORIGIN_Y: u16 = 3;
 
 #[inline]
-fn draw_menu(out: &mut Stdout, prompt: &str, items: &[String], pos: u16) -> Result<(), std::io::Error> {
+fn draw_cursor(out: &mut Stdout, pos: u16, delta: i32) -> Result<(), std::io::Error> {
+    let old_cursor_y: i32 = ORIGIN_Y as i32 + pos as i32 - delta;
+    out.queue(cursor::MoveTo(ORIGIN_X - 3, old_cursor_y.try_into().unwrap_or_default()))?;
+    out.queue(style::Print("  "))?;
+
+    let cursor_y = ORIGIN_Y + pos;
+    out.queue(cursor::MoveTo(ORIGIN_X - 3, cursor_y))?;
+    out.queue(style::Print("=>"))?;
+
+    Ok(())
+}
+
+#[inline]
+fn draw_menu(out: &mut Stdout, prompt: &str, items: &[String]) -> Result<(), std::io::Error> {
     out.queue(terminal::Clear(terminal::ClearType::All))?;
     out.queue(cursor::MoveTo(PROMPT_X, PROMPT_Y))?;
     out.queue(style::Print(prompt))?;
@@ -39,12 +52,6 @@ fn draw_menu(out: &mut Stdout, prompt: &str, items: &[String], pos: u16) -> Resu
     if items.is_empty() {
         out.queue(style::Print("<No options supplied>"))?;
     }
-
-    let cursor_y = ORIGIN_Y + pos;
-    out.queue(cursor::MoveTo(ORIGIN_X - 3, cursor_y))?;
-    out.queue(style::Print("=>"))?;
-
-    out.flush()?;
 
     Ok(())
 }
@@ -84,18 +91,18 @@ pub fn pick<T: Send + Sync + Display>(prompt: String, entry_rx: Receiver<T>) -> 
     let mut cursor_pos: i32 = 0;
     let mut cursor_change: i32 = 0;
     let mut picked = false;
-    let mut redraw = true;
+    let mut redraw_cursor = true;
+    let mut redraw_menu = true;
     while !picked {
         if let Ok(new_entry) = entry_rx.try_recv() {
-            println!("new entry {}", new_entry);
             entries_disp.push(new_entry.to_string());
             entries.push(new_entry);
-            redraw = true;
+            redraw_menu = true;
         }
 
         if let Ok(event) = pad_rx.try_recv() {
             match event {
-                EzEvent::South(val)     => picked = val,
+                EzEvent::South(val)     => picked = true,
                 EzEvent::DirectionUp    => cursor_change = -1,
                 EzEvent::DirectionDown  => cursor_change = 1,
                 _ => (),
@@ -116,23 +123,37 @@ pub fn pick<T: Send + Sync + Display>(prompt: String, entry_rx: Receiver<T>) -> 
         }
 
         if cursor_change != 0 {
-            redraw = true;
+            redraw_cursor = true;
+        }
+
+        if redraw_menu {
+            draw_menu(&mut out, &prompt, &entries_disp)?;
+            redraw_cursor = true;
         }
 
         cursor_pos += cursor_change;
         cursor_pos = cursor_pos.clamp(0, entries.len().saturating_sub(1).try_into().unwrap_or_default());
-        cursor_change = 0;
 
-        if redraw {
-            draw_menu(&mut out, &prompt, &entries_disp, cursor_pos.try_into().unwrap_or(0))?;
+        if redraw_cursor{
+            if let Ok(pos) = cursor_pos.try_into() {
+                draw_cursor(&mut out, pos, cursor_change)?;
+            }
         }
+
+        cursor_change = 0;
 
         // sometimes there are no options and the user *still* pressed the confirm key
         if entries.is_empty() && picked {
             picked = false;
         }
 
-        redraw = false;
+
+        if redraw_cursor || redraw_menu {
+            out.flush()?;
+        }
+
+        redraw_cursor = false;
+        redraw_menu = false;
         sleep(Duration::from_millis(50));
     }
 
